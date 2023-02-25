@@ -1,7 +1,7 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
     net::SocketAddr,
-    sync::{Arc, Mutex, RwLock},
+    sync::Arc,
 };
 
 use axum::{
@@ -14,17 +14,20 @@ use axum::{
     routing::get,
     Router, TypedHeader,
 };
-use rand::Rng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
-use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-// allows splitting the websocket stream into separate TX and RX branches
 use futures::{
-    channel::mpsc::{Receiver, Sender},
+    channel::mpsc::{channel, Receiver, Sender},
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
+use rand::Rng;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+};
+use tower_http::trace::{DefaultMakeSpan, TraceLayer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 type GameID = u32;
 
@@ -47,7 +50,24 @@ struct Player {
     rx: Receiver<Message>,
 }
 
-struct Game {}
+enum GameState {
+    Lobby,
+    Started,
+}
+
+struct Game {
+    state: GameState,
+    join: Sender<Player>,
+}
+
+impl Game {
+    fn new(join: Sender<Player>) -> Self {
+        Self {
+            state: GameState::Lobby,
+            join,
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -102,6 +122,10 @@ enum HandlerError {
     NoOpenSlots,
     #[error("game not found")]
     GameNotFound,
+    #[error("game already started")]
+    AlreadyStarted,
+    #[error("axum error")]
+    Axum(#[from] axum::Error),
 }
 
 enum MsgData {
@@ -143,64 +167,129 @@ where
 }
 
 #[derive(Deserialize)]
-enum IdentifyMessage {
+enum Room {
     Create,
     Join(GameID),
 }
 
-#[derive(Serialize)]
-enum IdentifyResponse {
-    NotFound,
-    OK,
+#[derive(Deserialize)]
+struct IdentifyMessage {
+    name: String,
+    room: Room,
 }
 
-fn create_game(state: &AppState) -> Result<&Mutex<Game>, HandlerError> {
-    let mut rng = rand::thread_rng();
-    let game = Mutex::new(Game {});
+async fn create_game(state: &AppState, host: Player) -> Result<(), HandlerError> {
+    let (join, receive_joins) = channel(0);
+    let game = Mutex::new(Game::new(join));
     for _ in 0..1000 {
-        let game_id: GameID = rng.gen_range(0..100000);
-        match state.games.write().unwrap().entry(game_id) {
+        let game_id: GameID = rand::thread_rng().gen_range(0..100000);
+        match state.games.write().await.entry(game_id) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                return Ok(v.insert(game));
+                tokio::spawn(game_handler(host, receive_joins));
+                v.insert(game);
+                return Ok(());
             }
         }
     }
     Err(HandlerError::NoOpenSlots)
 }
 
-fn join_game<'a>(state: &'a AppState, game_id: &GameID) -> Result<&'a Mutex<Game>, HandlerError> {
-    match state.games.read().unwrap().get(game_id) {
-        Some(game) => Ok(game),
-        None => Err(HandlerError::GameNotFound),
+async fn join_game(state: &AppState, game_id: &GameID, player: Player) -> Result<(), HandlerError> {
+    let mut games = state.games.write().await;
+    let mut game = games
+        .get_mut(game_id)
+        .ok_or(HandlerError::GameNotFound)?
+        .lock()
+        .await;
+    match game.state {
+        GameState::Lobby => {
+            game.join.send(player);
+            Ok(())
+        }
+        GameState::Started => Err(HandlerError::AlreadyStarted),
     }
 }
 
 async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
-    let (mut sender, mut receiver) = socket.split();
+    let (sender, receiver) = socket.split();
 
-    match handle_socket_inner(&mut sender, &mut receiver, who, state).await {
+    match handle_socket_inner(sender, receiver, who, state).await {
         Ok(()) => {}
-        Err(err) => {
+        Err((mut sender, err)) => {
             tracing::debug!("{:#?}", err);
             send_json::<Value>(&mut sender, &json!({ "error": format!("{}", err) })).await;
         }
     }
 }
 
+macro_rules! map_err {
+    ($sender:expr, $e:expr) => {
+        match $e {
+            Err(e) => return Err(($sender, e)),
+            Ok(v) => v,
+        }
+    };
+}
+
 /// Actual websocket statemachine (one will be spawned per connection)
 async fn handle_socket_inner(
-    sender: &mut SplitSink<WebSocket, Message>,
-    receiver: &mut SplitStream<WebSocket>,
+    mut sender: SplitSink<WebSocket, Message>,
+    mut receiver: SplitStream<WebSocket>,
     who: SocketAddr,
     state: AppState,
-) -> Result<(), HandlerError> {
-    let game: &Mutex<Game> = match recv_json::<IdentifyMessage>(receiver).await? {
-        IdentifyMessage::Create => create_game(&state)?,
-        IdentifyMessage::Join(game_id) => join_game(&state, &game_id)?,
+) -> Result<(), (SplitSink<WebSocket, Message>, HandlerError)> {
+    let identify = map_err!(sender, recv_json::<IdentifyMessage>(&mut receiver).await);
+    let (send_tx, mut send_rx) = channel(0);
+    let (mut recv_tx, recv_rx) = channel(0);
+    let player = Player {
+        name: identify.name,
+        tx: send_tx,
+        rx: recv_rx,
     };
+
+    match identify.room {
+        Room::Create => map_err!(sender, create_game(&state, player).await),
+        Room::Join(game_id) => map_err!(sender, join_game(&state, &game_id, player).await),
+    };
+
+    let mut send_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
+        while let Some(msg) = send_rx.next().await {
+            sender.send(msg).await?;
+        }
+        Ok(())
+    });
+
+    let mut recv_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
+        while let Some(msg) = receiver.next().await {
+            recv_tx.send(msg?).await;
+        }
+        Ok(())
+    });
+
+    // If any one of the tasks exit, abort the other.
+    tokio::select! {
+        rv_a = (&mut send_task) => {
+            match rv_a {
+                Ok(Ok(())) => {},
+                Err(b) => tracing::debug!("Error sending messages {:?}", b),
+                Ok(Err(b)) => tracing::debug!("Error sending messages {:?}", b)
+            }
+            recv_task.abort();
+        },
+        rv_b = (&mut recv_task) => {
+            match rv_b {
+                Ok(Ok(())) => {},
+                Err(b) => tracing::debug!("Error receiving messages {:?}", b),
+                Ok(Err(b)) => tracing::debug!("Error receiving messages {:?}", b)
+            }
+            send_task.abort();
+        }
+    }
 
     Ok(())
 }
+
+async fn game_handler(host: Player, receive_joins: Receiver<Player>) {}
