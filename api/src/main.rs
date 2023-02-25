@@ -18,6 +18,7 @@ use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
+    Stream,
 };
 use rand::Rng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -47,7 +48,7 @@ impl AppState {
 struct Player {
     name: String,
     tx: Sender<Message>,
-    rx: Receiver<Message>,
+    rx: Receiver<MsgData>,
 }
 
 enum GameState {
@@ -126,6 +127,8 @@ enum HandlerError {
     AlreadyStarted,
     #[error("axum error")]
     Axum(#[from] axum::Error),
+    #[error("mpsc error")]
+    Mpsc(#[from] futures::channel::mpsc::SendError),
 }
 
 enum MsgData {
@@ -133,7 +136,10 @@ enum MsgData {
     Binary(Vec<u8>),
 }
 
-async fn recv_next(receiver: &mut SplitStream<WebSocket>) -> Result<MsgData, HandlerError> {
+async fn recv_next<S>(receiver: &mut S) -> Result<MsgData, HandlerError>
+where
+    S: Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(t) => return Ok(MsgData::Text(t)),
@@ -145,22 +151,31 @@ async fn recv_next(receiver: &mut SplitStream<WebSocket>) -> Result<MsgData, Han
     Err(HandlerError::NoRecv)
 }
 
-async fn recv_json<T>(receiver: &mut SplitStream<WebSocket>) -> Result<T, HandlerError>
+fn json_from_msg<T>(msg: MsgData) -> Result<T, serde_json::Error>
 where
     T: DeserializeOwned,
 {
-    Ok(match recv_next(receiver).await? {
+    Ok(match msg {
         MsgData::Text(t) => serde_json::from_str(t.as_ref())?,
         MsgData::Binary(b) => serde_json::from_slice(b.as_ref())?,
     })
 }
 
-async fn send_json<T>(
-    sender: &mut SplitSink<WebSocket, Message>,
+async fn recv_json<T, S>(receiver: &mut S) -> Result<T, HandlerError>
+where
+    T: DeserializeOwned,
+    S: Stream<Item = Result<Message, axum::Error>> + Unpin,
+{
+    Ok(json_from_msg(recv_next(receiver).await?)?)
+}
+
+async fn send_json<T, S>(
+    sender: &mut S,
     value: &T,
-) -> Result<(), axum::Error>
+) -> Result<(), <S as futures::Sink<axum::extract::ws::Message>>::Error>
 where
     T: Sized + Serialize,
+    S: SinkExt<Message> + Unpin,
 {
     let msg_str = serde_json::to_string(value).unwrap();
     sender.send(Message::Text(msg_str)).await
@@ -178,7 +193,7 @@ struct IdentifyMessage {
     room: Room,
 }
 
-async fn create_game(state: &AppState, host: Player) -> Result<(), HandlerError> {
+async fn create_game(state: AppState, host: Player) -> Result<(), HandlerError> {
     let (join, receive_joins) = channel(0);
     let game = Mutex::new(Game::new(join));
     for _ in 0..1000 {
@@ -186,7 +201,7 @@ async fn create_game(state: &AppState, host: Player) -> Result<(), HandlerError>
         match state.games.write().await.entry(game_id) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                tokio::spawn(game_handler(host, receive_joins));
+                tokio::spawn(game_handler(state.clone(), game_id, host, receive_joins));
                 v.insert(game);
                 return Ok(());
             }
@@ -196,15 +211,18 @@ async fn create_game(state: &AppState, host: Player) -> Result<(), HandlerError>
 }
 
 async fn join_game(state: &AppState, game_id: &GameID, player: Player) -> Result<(), HandlerError> {
-    let mut games = state.games.write().await;
+    let games = state.games.read().await;
     let mut game = games
-        .get_mut(game_id)
+        .get(game_id)
         .ok_or(HandlerError::GameNotFound)?
         .lock()
         .await;
     match game.state {
         GameState::Lobby => {
-            game.join.send(player);
+            game.join
+                .send(player)
+                .await
+                .map_err(|_| HandlerError::AlreadyStarted)?;
             Ok(())
         }
         GameState::Started => Err(HandlerError::AlreadyStarted),
@@ -220,7 +238,11 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
         Ok(()) => {}
         Err((mut sender, err)) => {
             tracing::debug!("{:#?}", err);
-            send_json::<Value>(&mut sender, &json!({ "error": format!("{}", err) })).await;
+            match send_json::<Value, _>(&mut sender, &json!({ "error": format!("{}", err) })).await
+            {
+                Ok(_) => {}
+                Err(_) => {}
+            }
         }
     }
 }
@@ -241,7 +263,7 @@ async fn handle_socket_inner(
     who: SocketAddr,
     state: AppState,
 ) -> Result<(), (SplitSink<WebSocket, Message>, HandlerError)> {
-    let identify = map_err!(sender, recv_json::<IdentifyMessage>(&mut receiver).await);
+    let identify = map_err!(sender, recv_json::<IdentifyMessage, _>(&mut receiver).await);
     let (send_tx, mut send_rx) = channel(0);
     let (mut recv_tx, recv_rx) = channel(0);
     let player = Player {
@@ -251,7 +273,7 @@ async fn handle_socket_inner(
     };
 
     match identify.room {
-        Room::Create => map_err!(sender, create_game(&state, player).await),
+        Room::Create => map_err!(sender, create_game(state.clone(), player).await),
         Room::Join(game_id) => map_err!(sender, join_game(&state, &game_id, player).await),
     };
 
@@ -263,10 +285,9 @@ async fn handle_socket_inner(
     });
 
     let mut recv_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
-        while let Some(msg) = receiver.next().await {
-            recv_tx.send(msg?).await;
+        loop {
+            recv_tx.send(recv_next(&mut receiver).await?).await?;
         }
-        Ok(())
     });
 
     // If any one of the tasks exit, abort the other.
@@ -292,4 +313,67 @@ async fn handle_socket_inner(
     Ok(())
 }
 
-async fn game_handler(host: Player, receive_joins: Receiver<Player>) {}
+#[derive(Serialize)]
+struct GameCreationResponse {
+    game_id: GameID,
+}
+
+#[derive(Deserialize)]
+enum HostLobbyCmd {
+    StartGame,
+}
+
+async fn handle_lobby(
+    state: &AppState,
+    game_id: &GameID,
+    mut host: Player,
+    mut receive_joins: Receiver<Player>,
+) -> Option<(Player, Vec<Player>)> {
+    let mut players: Vec<Player> = vec![];
+    loop {
+        tokio::select! {
+            msg = host.rx.next() => {
+                let Some(msg) = msg else {
+                    tracing::debug!("Host disconnected from lobby");
+                    return None;
+                };
+                match json_from_msg::<HostLobbyCmd>(msg).ok()? {
+                    HostLobbyCmd::StartGame => {
+                        state.games
+                            .read()
+                            .await
+                            .get(game_id)
+                            .expect("current game ID doesn't exist")
+                            .lock()
+                            .await
+                            .state = GameState::Started;
+                        return Some((host, players)); // drop receive_joins
+                    },
+                }
+            }
+            join = receive_joins.next() => {
+                let Some(join) = join else { continue };
+                players.push(join);
+            }
+        };
+    }
+}
+
+async fn game_handler(
+    state: AppState,
+    game_id: GameID,
+    mut host: Player,
+    receive_joins: Receiver<Player>,
+) {
+    let Ok(_) = send_json::<GameCreationResponse, _>(
+        &mut host.tx,
+        &GameCreationResponse { game_id }
+    ).await else {
+        tracing::debug!("Failed to ack game creation");
+        return;
+    };
+    let Some((host, players)) = handle_lobby(&state, &game_id, host, receive_joins).await else {
+        tracing::debug!("Failed to handle lobby");
+        return;
+    };
+}
