@@ -15,7 +15,7 @@ use axum::{
     Router, TypedHeader,
 };
 use futures::{
-    channel::mpsc::{channel, Receiver, Sender},
+    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
     Stream,
@@ -47,8 +47,8 @@ impl AppState {
 
 struct Player {
     name: String,
-    tx: Sender<Message>,
-    rx: Receiver<MsgData>,
+    tx: UnboundedSender<Message>,
+    rx: UnboundedReceiver<MsgData>,
 }
 
 enum GameState {
@@ -56,13 +56,17 @@ enum GameState {
     Started,
 }
 
+type Join = (SocketAddr, Player);
+type JoinsSender = UnboundedSender<Join>;
+type JoinsReceiver = UnboundedReceiver<Join>;
+
 struct Game {
     state: GameState,
-    join: Sender<Player>,
+    join: JoinsSender,
 }
 
 impl Game {
-    fn new(join: Sender<Player>) -> Self {
+    fn new(join: JoinsSender) -> Self {
         Self {
             state: GameState::Lobby,
             join,
@@ -113,7 +117,7 @@ async fn ws_handler(
 
 #[derive(thiserror::Error, Debug)]
 enum HandlerError {
-    #[error("JSON decode error")]
+    #[error("JSON decode error: {0}")]
     JSONDecode(#[from] serde_json::Error),
     #[error("connection closed")]
     ConnectionClosed,
@@ -169,6 +173,13 @@ where
     Ok(json_from_msg(recv_next(receiver).await?)?)
 }
 
+fn json_msg<T>(value: &T) -> Message
+where
+    T: Sized + Serialize,
+{
+    Message::Text(serde_json::to_string(value).unwrap())
+}
+
 async fn send_json<T, S>(
     sender: &mut S,
     value: &T,
@@ -177,8 +188,7 @@ where
     T: Sized + Serialize,
     S: SinkExt<Message> + Unpin,
 {
-    let msg_str = serde_json::to_string(value).unwrap();
-    sender.send(Message::Text(msg_str)).await
+    sender.send(json_msg(value)).await
 }
 
 #[derive(Deserialize)]
@@ -193,15 +203,25 @@ struct IdentifyMessage {
     room: Room,
 }
 
-async fn create_game(state: AppState, host: Player) -> Result<(), HandlerError> {
-    let (join, receive_joins) = channel(0);
+async fn create_game(
+    state: AppState,
+    host_addr: SocketAddr,
+    host: Player,
+) -> Result<(), HandlerError> {
+    let (join, receive_joins) = unbounded();
     let game = Mutex::new(Game::new(join));
     for _ in 0..1000 {
         let game_id: GameID = rand::thread_rng().gen_range(0..100000);
         match state.games.write().await.entry(game_id) {
             Entry::Occupied(_) => {}
             Entry::Vacant(v) => {
-                tokio::spawn(game_handler(state.clone(), game_id, host, receive_joins));
+                tokio::spawn(game_handler(
+                    state.clone(),
+                    game_id,
+                    host_addr,
+                    host,
+                    receive_joins,
+                ));
                 v.insert(game);
                 return Ok(());
             }
@@ -210,7 +230,12 @@ async fn create_game(state: AppState, host: Player) -> Result<(), HandlerError> 
     Err(HandlerError::NoOpenSlots)
 }
 
-async fn join_game(state: &AppState, game_id: &GameID, player: Player) -> Result<(), HandlerError> {
+async fn join_game(
+    state: &AppState,
+    game_id: &GameID,
+    player_addr: SocketAddr,
+    player: Player,
+) -> Result<(), HandlerError> {
     let games = state.games.read().await;
     let mut game = games
         .get(game_id)
@@ -220,7 +245,7 @@ async fn join_game(state: &AppState, game_id: &GameID, player: Player) -> Result
     match game.state {
         GameState::Lobby => {
             game.join
-                .send(player)
+                .send((player_addr, player))
                 .await
                 .map_err(|_| HandlerError::AlreadyStarted)?;
             Ok(())
@@ -264,8 +289,8 @@ async fn handle_socket_inner(
     state: AppState,
 ) -> Result<(), (SplitSink<WebSocket, Message>, HandlerError)> {
     let identify = map_err!(sender, recv_json::<IdentifyMessage, _>(&mut receiver).await);
-    let (send_tx, mut send_rx) = channel(0);
-    let (mut recv_tx, recv_rx) = channel(0);
+    let (send_tx, mut send_rx) = unbounded();
+    let (mut recv_tx, recv_rx) = unbounded();
     let player = Player {
         name: identify.name,
         tx: send_tx,
@@ -273,8 +298,8 @@ async fn handle_socket_inner(
     };
 
     match identify.room {
-        Room::Create => map_err!(sender, create_game(state.clone(), player).await),
-        Room::Join(game_id) => map_err!(sender, join_game(&state, &game_id, player).await),
+        Room::Create => map_err!(sender, create_game(state.clone(), who, player).await),
+        Room::Join(game_id) => map_err!(sender, join_game(&state, &game_id, who, player).await),
     };
 
     let mut send_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
@@ -318,21 +343,36 @@ struct GameCreationResponse {
     game_id: GameID,
 }
 
+#[derive(Serialize)]
+struct LobbyJoin {
+    name: String,
+}
+
 #[derive(Deserialize)]
 enum HostLobbyCmd {
     StartGame,
 }
 
+type Connections = HashMap<SocketAddr, Player>;
+
+async fn broadcast(connections: &mut Connections, msg: Message) {
+    for c in connections.values_mut() {
+        if let Err(e) = c.tx.send(msg.clone()).await {
+            tracing::debug!("Failed to send broadcast: {e}");
+        }
+    }
+}
+
 async fn handle_lobby(
     state: &AppState,
     game_id: &GameID,
-    mut host: Player,
-    mut receive_joins: Receiver<Player>,
-) -> Option<(Player, Vec<Player>)> {
-    let mut players: Vec<Player> = vec![];
+    connections: &mut Connections,
+    host_addr: &SocketAddr,
+    mut receive_joins: UnboundedReceiver<(SocketAddr, Player)>,
+) -> Option<()> {
     loop {
         tokio::select! {
-            msg = host.rx.next() => {
+            msg = connections.get_mut(host_addr).unwrap().rx.next() => {
                 let Some(msg) = msg else {
                     tracing::debug!("Host disconnected from lobby");
                     return None;
@@ -347,13 +387,17 @@ async fn handle_lobby(
                             .lock()
                             .await
                             .state = GameState::Started;
-                        return Some((host, players)); // drop receive_joins
+                        return Some(()); // drop receive_joins
                     },
                 }
             }
             join = receive_joins.next() => {
-                let Some(join) = join else { continue };
-                players.push(join);
+                let Some((new_addr, new_player)) = join else { continue };
+                broadcast(
+                    connections,
+                    json_msg(&LobbyJoin { name: new_player.name.clone(), })
+                ).await;
+                connections.insert(new_addr, new_player);
             }
         };
     }
@@ -362,8 +406,9 @@ async fn handle_lobby(
 async fn game_handler(
     state: AppState,
     game_id: GameID,
+    host_addr: SocketAddr,
     mut host: Player,
-    receive_joins: Receiver<Player>,
+    receive_joins: JoinsReceiver,
 ) {
     let Ok(_) = send_json::<GameCreationResponse, _>(
         &mut host.tx,
@@ -372,8 +417,11 @@ async fn game_handler(
         tracing::debug!("Failed to ack game creation");
         return;
     };
-    let Some((host, players)) = handle_lobby(&state, &game_id, host, receive_joins).await else {
+    let mut connections: Connections = HashMap::new();
+    connections.insert(host_addr, host);
+    let Some(()) = handle_lobby(&state, &game_id, &mut connections, &host_addr, receive_joins).await else {
         tracing::debug!("Failed to handle lobby");
         return;
     };
+    tracing::debug!("Game starts with {} players", connections.len());
 }
