@@ -1,18 +1,53 @@
-use std::{borrow::Cow, net::SocketAddr, ops::ControlFlow};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    net::SocketAddr,
+    sync::{Arc, Mutex, RwLock},
+};
 
 use axum::{
     extract::{
-        ws::{CloseFrame, Message, WebSocket},
-        ConnectInfo, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+        ConnectInfo, State, WebSocketUpgrade,
     },
+    headers::Origin,
     response::IntoResponse,
     routing::get,
-    Router,
+    Router, TypedHeader,
 };
+use rand::Rng;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, Value};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 // allows splitting the websocket stream into separate TX and RX branches
-use futures::{sink::SinkExt, stream::StreamExt};
+use futures::{
+    channel::mpsc::{Receiver, Sender},
+    sink::SinkExt,
+    stream::{SplitSink, SplitStream, StreamExt},
+};
+
+type GameID = u32;
+
+#[derive(Clone, Default)]
+struct AppState {
+    games: Arc<RwLock<HashMap<GameID, Mutex<Game>>>>,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+struct Player {
+    name: String,
+    tx: Sender<Message>,
+    rx: Receiver<Message>,
+}
+
+struct Game {}
 
 #[tokio::main]
 async fn main() {
@@ -31,7 +66,8 @@ async fn main() {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
-        );
+        )
+        .with_state(AppState::new());
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     tracing::debug!("listening on {}", addr);
@@ -43,155 +79,128 @@ async fn main() {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    TypedHeader(origin): TypedHeader<Origin>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
-    println!("{addr} connected.");
+    // TODO: check origin for security
+    println!("{addr} connected from origin {origin}");
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
-/// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
-    //send a ping (unsupported by some browsers) just to kick things off and get a response
-    if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-        println!("Pinged {}...", who);
-    } else {
-        println!("Could not send ping {}!", who);
-        // no Error here since the only thing we can do is to close the connection.
-        // If we can not send messages, there is no way to salvage the statemachine anyway.
-        return;
-    }
+#[derive(thiserror::Error, Debug)]
+enum HandlerError {
+    #[error("JSON decode error")]
+    JSONDecode(#[from] serde_json::Error),
+    #[error("connection closed")]
+    ConnectionClosed,
+    #[error("didn't receive message")]
+    NoRecv,
+    #[error("no open game slots, try again later")]
+    NoOpenSlots,
+    #[error("game not found")]
+    GameNotFound,
+}
 
-    // receive single message from a client (we can either receive or send with socket).
-    // this will likely be the Pong for our Ping or a hello message from client.
-    // waiting for message from a client will block this task, but will not block other client's
-    // connections.
-    if let Some(msg) = socket.recv().await {
-        if let Ok(msg) = msg {
-            if process_message(msg, who).is_break() {
-                return;
+enum MsgData {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+async fn recv_next(receiver: &mut SplitStream<WebSocket>) -> Result<MsgData, HandlerError> {
+    while let Some(Ok(msg)) = receiver.next().await {
+        match msg {
+            Message::Text(t) => return Ok(MsgData::Text(t)),
+            Message::Binary(b) => return Ok(MsgData::Binary(b)),
+            Message::Close(_) => return Err(HandlerError::ConnectionClosed),
+            Message::Ping(_) | Message::Pong(_) => {}
+        }
+    }
+    Err(HandlerError::NoRecv)
+}
+
+async fn recv_json<T>(receiver: &mut SplitStream<WebSocket>) -> Result<T, HandlerError>
+where
+    T: DeserializeOwned,
+{
+    Ok(match recv_next(receiver).await? {
+        MsgData::Text(t) => serde_json::from_str(t.as_ref())?,
+        MsgData::Binary(b) => serde_json::from_slice(b.as_ref())?,
+    })
+}
+
+async fn send_json<T>(
+    sender: &mut SplitSink<WebSocket, Message>,
+    value: &T,
+) -> Result<(), axum::Error>
+where
+    T: Sized + Serialize,
+{
+    let msg_str = serde_json::to_string(value).unwrap();
+    sender.send(Message::Text(msg_str)).await
+}
+
+#[derive(Deserialize)]
+enum IdentifyMessage {
+    Create,
+    Join(GameID),
+}
+
+#[derive(Serialize)]
+enum IdentifyResponse {
+    NotFound,
+    OK,
+}
+
+fn create_game(state: &AppState) -> Result<&Mutex<Game>, HandlerError> {
+    let mut rng = rand::thread_rng();
+    let game = Mutex::new(Game {});
+    for _ in 0..1000 {
+        let game_id: GameID = rng.gen_range(0..100000);
+        match state.games.write().unwrap().entry(game_id) {
+            Entry::Occupied(_) => {}
+            Entry::Vacant(v) => {
+                return Ok(v.insert(game));
             }
-        } else {
-            println!("client {who} abruptly disconnected");
-            return;
         }
     }
+    Err(HandlerError::NoOpenSlots)
+}
 
-    // Since each client gets individual statemachine, we can pause handling
-    // when necessary to wait for some external event (in this case illustrated by sleeping).
-    // Waiting for this client to finish getting its greetings does not prevent other clients from
-    // connecting to server and receiving their greetings.
-    for i in 1..5 {
-        if socket
-            .send(Message::Text(format!("Hi {i} times!")))
-            .await
-            .is_err()
-        {
-            println!("client {who} abruptly disconnected");
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+fn join_game<'a>(state: &'a AppState, game_id: &GameID) -> Result<&'a Mutex<Game>, HandlerError> {
+    match state.games.read().unwrap().get(game_id) {
+        Some(game) => Ok(game),
+        None => Err(HandlerError::GameNotFound),
     }
+}
 
+async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
     let (mut sender, mut receiver) = socket.split();
 
-    // Spawn a task that will push several messages to the client (does not matter what client does)
-    let mut send_task = tokio::spawn(async move {
-        let n_msg = 20;
-        for i in 0..n_msg {
-            // In case of any websocket error, we exit.
-            if sender
-                .send(Message::Text(format!("Server message {i} ...")))
-                .await
-                .is_err()
-            {
-                return i;
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
-
-        println!("Sending close to {who}...");
-        if let Err(e) = sender
-            .send(Message::Close(Some(CloseFrame {
-                code: axum::extract::ws::close_code::NORMAL,
-                reason: Cow::from("Goodbye"),
-            })))
-            .await
-        {
-            println!("Could not send Close due to {}, probably it is ok?", e);
-        }
-        n_msg
-    });
-
-    // This second task will receive messages from client and print them on server console
-    let mut recv_task = tokio::spawn(async move {
-        let mut cnt = 0;
-        while let Some(Ok(msg)) = receiver.next().await {
-            cnt += 1;
-            // print message and break if instructed to do so
-            if process_message(msg, who).is_break() {
-                break;
-            }
-        }
-        cnt
-    });
-
-    // If any one of the tasks exit, abort the other.
-    tokio::select! {
-        rv_a = (&mut send_task) => {
-            match rv_a {
-                Ok(a) => println!("{} messages sent to {}", a, who),
-                Err(a) => println!("Error sending messages {:?}", a)
-            }
-            recv_task.abort();
-        },
-        rv_b = (&mut recv_task) => {
-            match rv_b {
-                Ok(b) => println!("Received {} messages", b),
-                Err(b) => println!("Error receiving messages {:?}", b)
-            }
-            send_task.abort();
+    match handle_socket_inner(&mut sender, &mut receiver, who, state).await {
+        Ok(()) => {}
+        Err(err) => {
+            tracing::debug!("{:#?}", err);
+            send_json::<Value>(&mut sender, &json!({ "error": format!("{}", err) })).await;
         }
     }
-
-    // returning from the handler closes the websocket connection
-    println!("Websocket context {} destroyed", who);
 }
 
-/// helper to print contents of messages to stdout. Has special treatment for Close.
-fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
-    match msg {
-        Message::Text(t) => {
-            println!(">>> {} sent str: {:?}", who, t);
-        }
-        Message::Binary(d) => {
-            println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
-        }
-        Message::Close(c) => {
-            if let Some(cf) = c {
-                println!(
-                    ">>> {} sent close with code {} and reason `{}`",
-                    who, cf.code, cf.reason
-                );
-            } else {
-                println!(">>> {} somehow sent close message without CloseFrame", who);
-            }
-            return ControlFlow::Break(());
-        }
+/// Actual websocket statemachine (one will be spawned per connection)
+async fn handle_socket_inner(
+    sender: &mut SplitSink<WebSocket, Message>,
+    receiver: &mut SplitStream<WebSocket>,
+    who: SocketAddr,
+    state: AppState,
+) -> Result<(), HandlerError> {
+    let game: &Mutex<Game> = match recv_json::<IdentifyMessage>(receiver).await? {
+        IdentifyMessage::Create => create_game(&state)?,
+        IdentifyMessage::Join(game_id) => join_game(&state, &game_id)?,
+    };
 
-        Message::Pong(v) => {
-            println!(">>> {} sent pong with {:?}", who, v);
-        }
-        // You should never need to manually handle Message::Ping, as axum's websocket library
-        // will do so for you automagically by replying with Pong and copying the v according to
-        // spec. But if you need the contents of the pings you can see them here.
-        Message::Ping(v) => {
-            println!(">>> {} sent ping with {:?}", who, v);
-        }
-    }
-    ControlFlow::Continue(())
+    Ok(())
 }
