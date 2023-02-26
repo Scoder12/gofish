@@ -11,6 +11,11 @@
   }
 
   h3 {
-    @apply text-3xl block;
+    @apply text-3xl block pt-3 pb-1;
+  }
+
+  input[type="text"],
+  input[type="number"] {
+    @apply border border-neutral-800;
   }
 }
