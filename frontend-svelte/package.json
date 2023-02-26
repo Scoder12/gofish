@@ -32,6 +32,6 @@
 	},
 	"type": "module",
 	"dependencies": {
-		"svelte-forms": "^2.3.1"
+		"svelte-forms-lib": "^2.0.1"
 	}
 }
