@@ -39,10 +39,10 @@ table IdentifyC {
 
 table StartGameC {}
 
-union CMsg {
+union Cmsg {
   IdentifyC,
   StartGameC,
 }
-table CMsgTable {
-  msg: CMsg;
+table CmsgTable {
+  msg: Cmsg;
 }

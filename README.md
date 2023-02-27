@@ -4,7 +4,7 @@ Building FlatBuffers:
 
 ```sh
 cd api
-( cat ../schema.fbs; echo 'root_type CMsgTable;' ) > ./schema_server.fbs; flatc --rust -o src/ ./schema_server.fbs
+( cat ../schema.fbs; echo 'root_type CmsgTable;' ) > ./schema_server.fbs; flatc --rust -o src/ ./schema_server.fbs
 ```
 
 ```sh

@@ -206,17 +206,17 @@ pub const ENUM_MIN_CMSG: u8 = 0;
 pub const ENUM_MAX_CMSG: u8 = 2;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_CMSG: [CMsg; 3] = [
-  CMsg::NONE,
-  CMsg::IdentifyC,
-  CMsg::StartGameC,
+pub const ENUM_VALUES_CMSG: [Cmsg; 3] = [
+  Cmsg::NONE,
+  Cmsg::IdentifyC,
+  Cmsg::StartGameC,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct CMsg(pub u8);
+pub struct Cmsg(pub u8);
 #[allow(non_upper_case_globals)]
-impl CMsg {
+impl Cmsg {
   pub const NONE: Self = Self(0);
   pub const IdentifyC: Self = Self(1);
   pub const StartGameC: Self = Self(2);
@@ -238,7 +238,7 @@ impl CMsg {
     }
   }
 }
-impl core::fmt::Debug for CMsg {
+impl core::fmt::Debug for Cmsg {
   fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
     if let Some(name) = self.variant_name() {
       f.write_str(name)
@@ -247,7 +247,7 @@ impl core::fmt::Debug for CMsg {
     }
   }
 }
-impl<'a> flatbuffers::Follow<'a> for CMsg {
+impl<'a> flatbuffers::Follow<'a> for Cmsg {
   type Inner = Self;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
@@ -256,15 +256,15 @@ impl<'a> flatbuffers::Follow<'a> for CMsg {
   }
 }
 
-impl flatbuffers::Push for CMsg {
-    type Output = CMsg;
+impl flatbuffers::Push for Cmsg {
+    type Output = Cmsg;
     #[inline]
     unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
         flatbuffers::emplace_scalar::<u8>(dst, self.0);
     }
 }
 
-impl flatbuffers::EndianScalar for CMsg {
+impl flatbuffers::EndianScalar for Cmsg {
   type Scalar = u8;
   #[inline]
   fn to_little_endian(self) -> u8 {
@@ -278,7 +278,7 @@ impl flatbuffers::EndianScalar for CMsg {
   }
 }
 
-impl<'a> flatbuffers::Verifiable for CMsg {
+impl<'a> flatbuffers::Verifiable for Cmsg {
   #[inline]
   fn run_verifier(
     v: &mut flatbuffers::Verifier, pos: usize
@@ -288,8 +288,8 @@ impl<'a> flatbuffers::Verifiable for CMsg {
   }
 }
 
-impl flatbuffers::SimpleToVerifyInSlice for CMsg {}
-pub struct CMsgUnionTableOffset {}
+impl flatbuffers::SimpleToVerifyInSlice for Cmsg {}
+pub struct CmsgUnionTableOffset {}
 
 pub enum ErrorSOffset {}
 #[derive(Copy, Clone, PartialEq)]
@@ -1094,35 +1094,35 @@ impl core::fmt::Debug for StartGameC<'_> {
       ds.finish()
   }
 }
-pub enum CMsgTableOffset {}
+pub enum CmsgTableOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct CMsgTable<'a> {
+pub struct CmsgTable<'a> {
   pub _tab: flatbuffers::Table<'a>,
 }
 
-impl<'a> flatbuffers::Follow<'a> for CMsgTable<'a> {
-  type Inner = CMsgTable<'a>;
+impl<'a> flatbuffers::Follow<'a> for CmsgTable<'a> {
+  type Inner = CmsgTable<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: flatbuffers::Table::new(buf, loc) }
   }
 }
 
-impl<'a> CMsgTable<'a> {
+impl<'a> CmsgTable<'a> {
   pub const VT_MSG_TYPE: flatbuffers::VOffsetT = 4;
   pub const VT_MSG: flatbuffers::VOffsetT = 6;
 
   #[inline]
   pub unsafe fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
-    CMsgTable { _tab: table }
+    CmsgTable { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr>(
     _fbb: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>,
-    args: &'args CMsgTableArgs
-  ) -> flatbuffers::WIPOffset<CMsgTable<'bldr>> {
-    let mut builder = CMsgTableBuilder::new(_fbb);
+    args: &'args CmsgTableArgs
+  ) -> flatbuffers::WIPOffset<CmsgTable<'bldr>> {
+    let mut builder = CmsgTableBuilder::new(_fbb);
     if let Some(x) = args.msg { builder.add_msg(x); }
     builder.add_msg_type(args.msg_type);
     builder.finish()
@@ -1130,23 +1130,23 @@ impl<'a> CMsgTable<'a> {
 
 
   #[inline]
-  pub fn msg_type(&self) -> CMsg {
+  pub fn msg_type(&self) -> Cmsg {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<CMsg>(CMsgTable::VT_MSG_TYPE, Some(CMsg::NONE)).unwrap()}
+    unsafe { self._tab.get::<Cmsg>(CmsgTable::VT_MSG_TYPE, Some(Cmsg::NONE)).unwrap()}
   }
   #[inline]
   pub fn msg(&self) -> Option<flatbuffers::Table<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Table<'a>>>(CMsgTable::VT_MSG, None)}
+    unsafe { self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Table<'a>>>(CmsgTable::VT_MSG, None)}
   }
   #[inline]
   #[allow(non_snake_case)]
   pub fn msg_as_identify_c(&self) -> Option<IdentifyC<'a>> {
-    if self.msg_type() == CMsg::IdentifyC {
+    if self.msg_type() == Cmsg::IdentifyC {
       self.msg().map(|t| {
        // Safety:
        // Created from a valid Table for this object
@@ -1161,7 +1161,7 @@ impl<'a> CMsgTable<'a> {
   #[inline]
   #[allow(non_snake_case)]
   pub fn msg_as_start_game_c(&self) -> Option<StartGameC<'a>> {
-    if self.msg_type() == CMsg::StartGameC {
+    if self.msg_type() == Cmsg::StartGameC {
       self.msg().map(|t| {
        // Safety:
        // Created from a valid Table for this object
@@ -1175,17 +1175,17 @@ impl<'a> CMsgTable<'a> {
 
 }
 
-impl flatbuffers::Verifiable for CMsgTable<'_> {
+impl flatbuffers::Verifiable for CmsgTable<'_> {
   #[inline]
   fn run_verifier(
     v: &mut flatbuffers::Verifier, pos: usize
   ) -> Result<(), flatbuffers::InvalidFlatbuffer> {
     use self::flatbuffers::Verifiable;
     v.visit_table(pos)?
-     .visit_union::<CMsg, _>("msg_type", Self::VT_MSG_TYPE, "msg", Self::VT_MSG, false, |key, v, pos| {
+     .visit_union::<Cmsg, _>("msg_type", Self::VT_MSG_TYPE, "msg", Self::VT_MSG, false, |key, v, pos| {
         match key {
-          CMsg::IdentifyC => v.verify_union_variant::<flatbuffers::ForwardsUOffset<IdentifyC>>("CMsg::IdentifyC", pos),
-          CMsg::StartGameC => v.verify_union_variant::<flatbuffers::ForwardsUOffset<StartGameC>>("CMsg::StartGameC", pos),
+          Cmsg::IdentifyC => v.verify_union_variant::<flatbuffers::ForwardsUOffset<IdentifyC>>("Cmsg::IdentifyC", pos),
+          Cmsg::StartGameC => v.verify_union_variant::<flatbuffers::ForwardsUOffset<StartGameC>>("Cmsg::StartGameC", pos),
           _ => Ok(()),
         }
      })?
@@ -1193,61 +1193,61 @@ impl flatbuffers::Verifiable for CMsgTable<'_> {
     Ok(())
   }
 }
-pub struct CMsgTableArgs {
-    pub msg_type: CMsg,
+pub struct CmsgTableArgs {
+    pub msg_type: Cmsg,
     pub msg: Option<flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>>,
 }
-impl<'a> Default for CMsgTableArgs {
+impl<'a> Default for CmsgTableArgs {
   #[inline]
   fn default() -> Self {
-    CMsgTableArgs {
-      msg_type: CMsg::NONE,
+    CmsgTableArgs {
+      msg_type: Cmsg::NONE,
       msg: None,
     }
   }
 }
 
-pub struct CMsgTableBuilder<'a: 'b, 'b> {
+pub struct CmsgTableBuilder<'a: 'b, 'b> {
   fbb_: &'b mut flatbuffers::FlatBufferBuilder<'a>,
   start_: flatbuffers::WIPOffset<flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b> CMsgTableBuilder<'a, 'b> {
+impl<'a: 'b, 'b> CmsgTableBuilder<'a, 'b> {
   #[inline]
-  pub fn add_msg_type(&mut self, msg_type: CMsg) {
-    self.fbb_.push_slot::<CMsg>(CMsgTable::VT_MSG_TYPE, msg_type, CMsg::NONE);
+  pub fn add_msg_type(&mut self, msg_type: Cmsg) {
+    self.fbb_.push_slot::<Cmsg>(CmsgTable::VT_MSG_TYPE, msg_type, Cmsg::NONE);
   }
   #[inline]
   pub fn add_msg(&mut self, msg: flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>) {
-    self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(CMsgTable::VT_MSG, msg);
+    self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(CmsgTable::VT_MSG, msg);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> CMsgTableBuilder<'a, 'b> {
+  pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> CmsgTableBuilder<'a, 'b> {
     let start = _fbb.start_table();
-    CMsgTableBuilder {
+    CmsgTableBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> flatbuffers::WIPOffset<CMsgTable<'a>> {
+  pub fn finish(self) -> flatbuffers::WIPOffset<CmsgTable<'a>> {
     let o = self.fbb_.end_table(self.start_);
     flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl core::fmt::Debug for CMsgTable<'_> {
+impl core::fmt::Debug for CmsgTable<'_> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    let mut ds = f.debug_struct("CMsgTable");
+    let mut ds = f.debug_struct("CmsgTable");
       ds.field("msg_type", &self.msg_type());
       match self.msg_type() {
-        CMsg::IdentifyC => {
+        Cmsg::IdentifyC => {
           if let Some(x) = self.msg_as_identify_c() {
             ds.field("msg", &x)
           } else {
             ds.field("msg", &"InvalidFlatbuffer: Union discriminant does not match value.")
           }
         },
-        CMsg::StartGameC => {
+        Cmsg::StartGameC => {
           if let Some(x) = self.msg_as_start_game_c() {
             ds.field("msg", &x)
           } else {
@@ -1263,28 +1263,28 @@ impl core::fmt::Debug for CMsgTable<'_> {
   }
 }
 #[inline]
-/// Verifies that a buffer of bytes contains a `CMsgTable`
+/// Verifies that a buffer of bytes contains a `CmsgTable`
 /// and returns it.
 /// Note that verification is still experimental and may not
 /// catch every error, or be maximally performant. For the
 /// previous, unchecked, behavior use
 /// `root_as_cmsg_table_unchecked`.
-pub fn root_as_cmsg_table(buf: &[u8]) -> Result<CMsgTable, flatbuffers::InvalidFlatbuffer> {
-  flatbuffers::root::<CMsgTable>(buf)
+pub fn root_as_cmsg_table(buf: &[u8]) -> Result<CmsgTable, flatbuffers::InvalidFlatbuffer> {
+  flatbuffers::root::<CmsgTable>(buf)
 }
 #[inline]
 /// Verifies that a buffer of bytes contains a size prefixed
-/// `CMsgTable` and returns it.
+/// `CmsgTable` and returns it.
 /// Note that verification is still experimental and may not
 /// catch every error, or be maximally performant. For the
 /// previous, unchecked, behavior use
 /// `size_prefixed_root_as_cmsg_table_unchecked`.
-pub fn size_prefixed_root_as_cmsg_table(buf: &[u8]) -> Result<CMsgTable, flatbuffers::InvalidFlatbuffer> {
-  flatbuffers::size_prefixed_root::<CMsgTable>(buf)
+pub fn size_prefixed_root_as_cmsg_table(buf: &[u8]) -> Result<CmsgTable, flatbuffers::InvalidFlatbuffer> {
+  flatbuffers::size_prefixed_root::<CmsgTable>(buf)
 }
 #[inline]
 /// Verifies, with the given options, that a buffer of bytes
-/// contains a `CMsgTable` and returns it.
+/// contains a `CmsgTable` and returns it.
 /// Note that verification is still experimental and may not
 /// catch every error, or be maximally performant. For the
 /// previous, unchecked, behavior use
@@ -1292,12 +1292,12 @@ pub fn size_prefixed_root_as_cmsg_table(buf: &[u8]) -> Result<CMsgTable, flatbuf
 pub fn root_as_cmsg_table_with_opts<'b, 'o>(
   opts: &'o flatbuffers::VerifierOptions,
   buf: &'b [u8],
-) -> Result<CMsgTable<'b>, flatbuffers::InvalidFlatbuffer> {
-  flatbuffers::root_with_opts::<CMsgTable<'b>>(opts, buf)
+) -> Result<CmsgTable<'b>, flatbuffers::InvalidFlatbuffer> {
+  flatbuffers::root_with_opts::<CmsgTable<'b>>(opts, buf)
 }
 #[inline]
 /// Verifies, with the given verifier options, that a buffer of
-/// bytes contains a size prefixed `CMsgTable` and returns
+/// bytes contains a size prefixed `CmsgTable` and returns
 /// it. Note that verification is still experimental and may not
 /// catch every error, or be maximally performant. For the
 /// previous, unchecked, behavior use
@@ -1305,32 +1305,32 @@ pub fn root_as_cmsg_table_with_opts<'b, 'o>(
 pub fn size_prefixed_root_as_cmsg_table_with_opts<'b, 'o>(
   opts: &'o flatbuffers::VerifierOptions,
   buf: &'b [u8],
-) -> Result<CMsgTable<'b>, flatbuffers::InvalidFlatbuffer> {
-  flatbuffers::size_prefixed_root_with_opts::<CMsgTable<'b>>(opts, buf)
+) -> Result<CmsgTable<'b>, flatbuffers::InvalidFlatbuffer> {
+  flatbuffers::size_prefixed_root_with_opts::<CmsgTable<'b>>(opts, buf)
 }
 #[inline]
-/// Assumes, without verification, that a buffer of bytes contains a CMsgTable and returns it.
+/// Assumes, without verification, that a buffer of bytes contains a CmsgTable and returns it.
 /// # Safety
-/// Callers must trust the given bytes do indeed contain a valid `CMsgTable`.
-pub unsafe fn root_as_cmsg_table_unchecked(buf: &[u8]) -> CMsgTable {
-  flatbuffers::root_unchecked::<CMsgTable>(buf)
+/// Callers must trust the given bytes do indeed contain a valid `CmsgTable`.
+pub unsafe fn root_as_cmsg_table_unchecked(buf: &[u8]) -> CmsgTable {
+  flatbuffers::root_unchecked::<CmsgTable>(buf)
 }
 #[inline]
-/// Assumes, without verification, that a buffer of bytes contains a size prefixed CMsgTable and returns it.
+/// Assumes, without verification, that a buffer of bytes contains a size prefixed CmsgTable and returns it.
 /// # Safety
-/// Callers must trust the given bytes do indeed contain a valid size prefixed `CMsgTable`.
-pub unsafe fn size_prefixed_root_as_cmsg_table_unchecked(buf: &[u8]) -> CMsgTable {
-  flatbuffers::size_prefixed_root_unchecked::<CMsgTable>(buf)
+/// Callers must trust the given bytes do indeed contain a valid size prefixed `CmsgTable`.
+pub unsafe fn size_prefixed_root_as_cmsg_table_unchecked(buf: &[u8]) -> CmsgTable {
+  flatbuffers::size_prefixed_root_unchecked::<CmsgTable>(buf)
 }
 #[inline]
 pub fn finish_cmsg_table_buffer<'a, 'b>(
     fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>,
-    root: flatbuffers::WIPOffset<CMsgTable<'a>>) {
+    root: flatbuffers::WIPOffset<CmsgTable<'a>>) {
   fbb.finish(root, None);
 }
 
 #[inline]
-pub fn finish_size_prefixed_cmsg_table_buffer<'a, 'b>(fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>, root: flatbuffers::WIPOffset<CMsgTable<'a>>) {
+pub fn finish_size_prefixed_cmsg_table_buffer<'a, 'b>(fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>, root: flatbuffers::WIPOffset<CmsgTable<'a>>) {
   fbb.finish_size_prefixed(root, None);
 }
 }  // pub mod GoFish
