@@ -32,6 +32,7 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"flatbuffers": "^23.1.21",
 		"svelte-forms-lib": "^2.0.1"
 	}
 }

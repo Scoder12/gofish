@@ -869,6 +869,11 @@ flat-cache@^3.0.4:
     flatted "^3.1.0"
     rimraf "^3.0.2"
 
+flatbuffers@^23.1.21:
+  version "23.1.21"
+  resolved "https://registry.yarnpkg.com/flatbuffers/-/flatbuffers-23.1.21.tgz#a677f0e79484ce70070e22994c12e2bdeb005133"
+  integrity sha512-7ztssjhUCQKCd7MwQNlQDwNam8iL4reBAMHglf024amlVRn/aIo7B8+ee/igKxxK5B7Wp4nWe4sTYg8lpK2CAQ==
+
 flatted@^3.1.0:
   version "3.2.7"
   resolved "https://registry.yarnpkg.com/flatted/-/flatted-3.2.7.tgz#609f39207cb614b89d0765b477cb2d437fbf9787"
