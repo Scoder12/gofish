@@ -8,10 +8,12 @@
 		Cmsg,
 		CmsgTable,
 		Create,
+		ErrorS,
 		GameCreationResponseS,
 		GameRef,
 		IdentifyC,
 		Join,
+		Smsg,
 		SmsgTable
 	} from '../go-fish';
 	import { env } from '$env/dynamic/public';
@@ -63,6 +65,19 @@
 		});
 	}
 
+	function unpackMessage<T>(msg: ArrayBuffer, typ: Smsg, obj: T): T {
+		const bb = new flatbuffers.ByteBuffer(new Uint8Array(msg));
+		const smsg = SmsgTable.getRootAsSmsgTable(bb);
+		if (smsg.msgType() == Smsg.ErrorS) {
+			const error: ErrorS = smsg.msg(new ErrorS());
+			throw new Error(`Error from server: ${error.error()}`);
+		}
+		if (smsg.msgType() != typ) {
+			throw new Error(`Unexpected message type ${smsg.msgType()}, expected ${typ}`);
+		}
+		return smsg.msg(obj);
+	}
+
 	function connect(detail: any) {
 		const msg = identifyMsg(detail);
 		const wsUrl = env.PUBLIC_WS_URL;
@@ -76,12 +91,8 @@
 		ws.onopen = async () => {
 			ws!.send(msg);
 			const resp = await nextMessage(ws!);
-			const bb = new flatbuffers.ByteBuffer(new Uint8Array(resp.data));
-			const smsg = SmsgTable.getRootAsSmsgTable(bb);
-			(window as any)._SMSG = smsg;
-			console.log({ smsg });
-			(window as any)._smg = smsg.msg(new GameCreationResponseS());
-			console.log({ v: window._smg });
+			const r = unpackMessage(resp.data, Smsg.GameCreationResponseS, new GameCreationResponseS());
+			console.log(r.id());
 		};
 	}
 </script>
