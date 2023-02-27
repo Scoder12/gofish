@@ -46,3 +46,4 @@ union CMsg {
 table CMsgTable {
   msg: CMsg;
 }
+root_type CMsgTable;

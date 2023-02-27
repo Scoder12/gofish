@@ -22,8 +22,10 @@ use futures::{
     Stream,
 };
 use rand::Rng;
-use schema_generated::go_fish::{
-    ErrorS2C, ErrorS2CArgs, GameCreationResponse, GameCreationResponseArgs,
+mod schema_server_generated;
+use schema_server_generated::go_fish::{
+    root_as_cmsg_table, ErrorS, ErrorSArgs, GameCreationResponseS, GameCreationResponseSArgs,
+    GameRef,
 };
 use tokio::{
     sync::{Mutex, RwLock},
@@ -31,10 +33,6 @@ use tokio::{
 };
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::schema_generated::go_fish::{root_as_cmsg_table, GameRef};
-
-mod schema_generated;
 
 type GameID = u32;
 
@@ -164,10 +162,10 @@ where
 
 fn error_msg(error: &str) -> Message {
     let mut builder = FlatBufferBuilder::new();
-    let args = ErrorS2CArgs {
+    let args = ErrorSArgs {
         error: Some(builder.create_string(error)),
     };
-    let offset = ErrorS2C::create(&mut builder, &args);
+    let offset = ErrorS::create(&mut builder, &args);
     builder.finish(offset, None);
     Message::Binary(builder.finished_data().to_owned())
 }
@@ -354,8 +352,8 @@ async fn handle_lobby(
 
 fn game_creation_response(game_id: GameID) -> Message {
     let mut builder = FlatBufferBuilder::new();
-    let args = GameCreationResponseArgs { id: game_id };
-    let offset = GameCreationResponse::create(&mut builder, &args);
+    let args = GameCreationResponseSArgs { id: game_id };
+    let offset = GameCreationResponseS::create(&mut builder, &args);
     builder.finish(offset, None);
     Message::Binary(builder.finished_data().to_owned())
 }
