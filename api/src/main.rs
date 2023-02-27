@@ -14,6 +14,7 @@ use axum::{
     routing::get,
     Router, TypedHeader,
 };
+use flatbuffers::{FlatBufferBuilder, InvalidFlatbuffer};
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     sink::SinkExt,
@@ -21,14 +22,19 @@ use futures::{
     Stream,
 };
 use rand::Rng;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+use schema_generated::go_fish::{
+    ErrorS2C, ErrorS2CArgs, GameCreationResponse, GameCreationResponseArgs,
+};
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
 };
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::schema_generated::go_fish::{root_as_cmsg_table, GameRef};
+
+mod schema_generated;
 
 type GameID = u32;
 
@@ -48,7 +54,7 @@ impl AppState {
 struct Player {
     name: String,
     tx: UnboundedSender<Message>,
-    rx: UnboundedReceiver<MsgData>,
+    rx: UnboundedReceiver<Vec<u8>>,
 }
 
 enum GameState {
@@ -117,8 +123,14 @@ async fn ws_handler(
 
 #[derive(thiserror::Error, Debug)]
 enum HandlerError {
-    #[error("JSON decode error: {0}")]
-    JSONDecode(#[from] serde_json::Error),
+    #[error("expected binary")]
+    ExpectedBinary,
+    #[error("flatbuffers decode error: {0}")]
+    FlatDecode(#[from] InvalidFlatbuffer),
+    #[error("unexpected message type: {0}")]
+    UnexpectedMessage(u8),
+    #[error("invalid message")]
+    InvalidMessage,
     #[error("connection closed")]
     ConnectionClosed,
     #[error("didn't receive message")]
@@ -135,72 +147,29 @@ enum HandlerError {
     Mpsc(#[from] futures::channel::mpsc::SendError),
 }
 
-enum MsgData {
-    Text(String),
-    Binary(Vec<u8>),
-}
-
-async fn recv_next<S>(receiver: &mut S) -> Result<MsgData, HandlerError>
+async fn recv_next<S>(receiver: &mut S) -> Result<Vec<u8>, HandlerError>
 where
     S: Stream<Item = Result<Message, axum::Error>> + Unpin,
 {
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
-            Message::Text(t) => return Ok(MsgData::Text(t)),
-            Message::Binary(b) => return Ok(MsgData::Binary(b)),
+            Message::Text(_) => return Err(HandlerError::ExpectedBinary),
+            Message::Binary(b) => return Ok(b),
             Message::Close(_) => return Err(HandlerError::ConnectionClosed),
-            Message::Ping(_) | Message::Pong(_) => {}
+            Message::Ping(_) | Message::Pong(_) => {} // ignore
         }
     }
     Err(HandlerError::NoRecv)
 }
 
-fn json_from_msg<T>(msg: MsgData) -> Result<T, serde_json::Error>
-where
-    T: DeserializeOwned,
-{
-    Ok(match msg {
-        MsgData::Text(t) => serde_json::from_str(t.as_ref())?,
-        MsgData::Binary(b) => serde_json::from_slice(b.as_ref())?,
-    })
-}
-
-async fn recv_json<T, S>(receiver: &mut S) -> Result<T, HandlerError>
-where
-    T: DeserializeOwned,
-    S: Stream<Item = Result<Message, axum::Error>> + Unpin,
-{
-    Ok(json_from_msg(recv_next(receiver).await?)?)
-}
-
-fn json_msg<T>(value: &T) -> Message
-where
-    T: Sized + Serialize,
-{
-    Message::Text(serde_json::to_string(value).unwrap())
-}
-
-async fn send_json<T, S>(
-    sender: &mut S,
-    value: &T,
-) -> Result<(), <S as futures::Sink<axum::extract::ws::Message>>::Error>
-where
-    T: Sized + Serialize,
-    S: SinkExt<Message> + Unpin,
-{
-    sender.send(json_msg(value)).await
-}
-
-#[derive(Deserialize)]
-enum Room {
-    Create,
-    Join(GameID),
-}
-
-#[derive(Deserialize)]
-struct IdentifyMessage {
-    name: String,
-    room: Room,
+fn error_msg(error: &str) -> Message {
+    let mut builder = FlatBufferBuilder::new();
+    let args = ErrorS2CArgs {
+        error: Some(builder.create_string(error)),
+    };
+    let offset = ErrorS2C::create(&mut builder, &args);
+    builder.finish(offset, None);
+    Message::Binary(builder.finished_data().to_owned())
 }
 
 async fn create_game(
@@ -263,11 +232,10 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
         Ok(()) => {}
         Err((mut sender, err)) => {
             tracing::debug!("{:#?}", err);
-            match send_json::<Value, _>(&mut sender, &json!({ "error": format!("{}", err) })).await
-            {
+            match sender.send(error_msg(format!("{}", err).as_ref())).await {
                 Ok(_) => {}
-                Err(_) => {}
-            }
+                Err(e) => tracing::debug!("error sending error msg: {}", e),
+            };
         }
     }
 }
@@ -275,7 +243,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
 macro_rules! map_err {
     ($sender:expr, $e:expr) => {
         match $e {
-            Err(e) => return Err(($sender, e)),
+            Err(e) => return Err(($sender, e.into())),
             Ok(v) => v,
         }
     };
@@ -288,18 +256,29 @@ async fn handle_socket_inner(
     who: SocketAddr,
     state: AppState,
 ) -> Result<(), (SplitSink<WebSocket, Message>, HandlerError)> {
-    let identify = map_err!(sender, recv_json::<IdentifyMessage, _>(&mut receiver).await);
+    let dat = map_err!(sender, recv_next(&mut receiver).await);
+    let msg = map_err!(sender, root_as_cmsg_table(dat.as_ref()));
+    let identify = map_err!(
+        sender,
+        msg.msg_as_identify_c()
+            .ok_or_else(|| HandlerError::UnexpectedMessage(msg.msg_type().0))
+    );
+
     let (send_tx, mut send_rx) = unbounded();
     let (mut recv_tx, recv_rx) = unbounded();
     let player = Player {
-        name: identify.name,
+        name: identify.name().to_owned(),
         tx: send_tx,
         rx: recv_rx,
     };
 
-    match identify.room {
-        Room::Create => map_err!(sender, create_game(state.clone(), who, player).await),
-        Room::Join(game_id) => map_err!(sender, join_game(&state, &game_id, who, player).await),
+    match identify.game_type() {
+        GameRef::Create => map_err!(sender, create_game(state.clone(), who, player).await),
+        GameRef::Join => map_err!(
+            sender,
+            join_game(&state, &identify.game_as_join().unwrap().id(), who, player).await
+        ),
+        _ => return Err((sender, HandlerError::InvalidMessage)),
     };
 
     let mut send_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
@@ -338,21 +317,6 @@ async fn handle_socket_inner(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct GameCreationResponse {
-    game_id: GameID,
-}
-
-#[derive(Serialize)]
-struct LobbyJoin {
-    name: String,
-}
-
-#[derive(Deserialize)]
-enum HostLobbyCmd {
-    StartGame,
-}
-
 type Connections = HashMap<SocketAddr, Player>;
 
 async fn broadcast(connections: &mut Connections, msg: Message) {
@@ -377,30 +341,23 @@ async fn handle_lobby(
                     tracing::debug!("Host disconnected from lobby");
                     return None;
                 };
-                match json_from_msg::<HostLobbyCmd>(msg).ok()? {
-                    HostLobbyCmd::StartGame => {
-                        state.games
-                            .read()
-                            .await
-                            .get(game_id)
-                            .expect("current game ID doesn't exist")
-                            .lock()
-                            .await
-                            .state = GameState::Started;
-                        return Some(()); // drop receive_joins
-                    },
-                }
+                // TODO
             }
             join = receive_joins.next() => {
                 let Some((new_addr, new_player)) = join else { continue };
-                broadcast(
-                    connections,
-                    json_msg(&LobbyJoin { name: new_player.name.clone(), })
-                ).await;
+                // TODO
                 connections.insert(new_addr, new_player);
             }
         };
     }
+}
+
+fn game_creation_response(game_id: GameID) -> Message {
+    let mut builder = FlatBufferBuilder::new();
+    let args = GameCreationResponseArgs { id: game_id };
+    let offset = GameCreationResponse::create(&mut builder, &args);
+    builder.finish(offset, None);
+    Message::Binary(builder.finished_data().to_owned())
 }
 
 async fn game_handler(
@@ -410,13 +367,11 @@ async fn game_handler(
     mut host: Player,
     receive_joins: JoinsReceiver,
 ) {
-    let Ok(_) = send_json::<GameCreationResponse, _>(
-        &mut host.tx,
-        &GameCreationResponse { game_id }
-    ).await else {
+    let Ok(_) = host.tx.send(game_creation_response(game_id)).await else {
         tracing::debug!("Failed to ack game creation");
         return;
     };
+
     let mut connections: Connections = HashMap::new();
     connections.insert(host_addr, host);
     let Some(()) = handle_lobby(&state, &game_id, &mut connections, &host_addr, receive_joins).await else {

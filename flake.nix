@@ -20,6 +20,17 @@
       (self: super: {
         rustToolchain = super.rust-bin.stable.latest.default;
       })
+      (self: super: {
+        flatbuffers = super.flatbuffers.overrideAttrs (final: prev: rec {
+          version = "23.1.21";
+          src = super.fetchFromGitHub {
+            owner = "google";
+            repo = "flatbuffers";
+            rev = "v${version}";
+            sha256 = "sha256-/46Yo186PjewYN+e/UWZc0QQhXZcq/x7iaN48RA1avw=";
+          };
+        });
+      })
     ];
 
     # Helper to provide system-specific attributes
@@ -41,6 +52,7 @@
             rustToolchain
             nodejs-18_x
             yarn
+            flatbuffers
           ])
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs; [libiconv]);
       };

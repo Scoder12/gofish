@@ -1,0 +1,41 @@
+// example IDL file
+
+namespace GoFish;
+
+// -- SERVER --
+
+table ErrorS2C {
+  error: string (required);
+}
+
+table GameCreationResponse {
+  id: uint32;
+}
+
+// -- CLIENT --
+
+table Create {}
+table Join {
+  id: uint32;
+}
+
+union GameRef {
+  Create,
+  Join,
+}
+
+table IdentifyC {
+  name: string (required);
+  game: GameRef (required);
+}
+
+table StartGameC {}
+
+union CMsg {
+  IdentifyC,
+  StartGameC,
+}
+table CMsgTable {
+  msg: CMsg;
+}
+root_type CMsgTable;
