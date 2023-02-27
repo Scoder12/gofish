@@ -162,11 +162,16 @@ where
 
 fn error_msg(error: &str) -> Message {
     let mut builder = FlatBufferBuilder::new();
-    let args = ErrorSArgs {
+    let error_args = ErrorSArgs {
         error: Some(builder.create_string(error)),
     };
-    let offset = ErrorS::create(&mut builder, &args);
-    builder.finish(offset, None);
+    let error_offset = ErrorS::create(&mut builder, &error_args);
+    let smsg_args = SmsgTableArgs {
+        msg_type: Smsg::ErrorS,
+        msg: Some(error_offset.as_union_value()),
+    };
+    let smsg_offset = SmsgTable::create(&mut builder, &smsg_args);
+    builder.finish(smsg_offset, None);
     Message::Binary(builder.finished_data().to_owned())
 }
 
