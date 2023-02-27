@@ -25,7 +25,7 @@ use rand::Rng;
 mod schema_server_generated;
 use schema_server_generated::go_fish::{
     root_as_cmsg_table, ErrorS, ErrorSArgs, GameCreationResponseS, GameCreationResponseSArgs,
-    GameRef,
+    GameRef, Smsg, SmsgTable, SmsgTableArgs,
 };
 use tokio::{
     sync::{Mutex, RwLock},
@@ -352,9 +352,14 @@ async fn handle_lobby(
 
 fn game_creation_response(game_id: GameID) -> Message {
     let mut builder = FlatBufferBuilder::new();
-    let args = GameCreationResponseSArgs { id: game_id };
-    let offset = GameCreationResponseS::create(&mut builder, &args);
-    builder.finish(offset, None);
+    let game_creation_args = GameCreationResponseSArgs { id: game_id };
+    let game_creation_offset = GameCreationResponseS::create(&mut builder, &game_creation_args);
+    let msg_args = SmsgTableArgs {
+        msg_type: Smsg::GameCreationResponseS,
+        msg: Some(game_creation_offset.as_union_value()),
+    };
+    let msg_offset = SmsgTable::create(&mut builder, &msg_args);
+    builder.finish(msg_offset, None);
     Message::Binary(builder.finished_data().to_owned())
 }
 
