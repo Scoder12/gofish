@@ -370,6 +370,7 @@ async fn game_handler(
     mut host: Player,
     receive_joins: JoinsReceiver,
 ) {
+    tracing::debug!("Starting game with ID {}", game_id);
     let Ok(_) = host.tx.send(game_creation_response(game_id)).await else {
         tracing::debug!("Failed to ack game creation");
         return;
