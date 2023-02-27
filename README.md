@@ -9,5 +9,5 @@ cd api
 
 ```sh
 cd frontend
-( cat ../schema.fbs; echo 'root_type SMsgTable;' ) > ./schema_client.fbs; flatc --ts -o src/ ./schema_client.fbs
+( cat ../schema.fbs; echo 'root_type SmsgTable;' ) > ./schema_client.fbs; flatc --ts -o src/ ./schema_client.fbs
 ```

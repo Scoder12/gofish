@@ -12,12 +12,12 @@ table GameCreationResponseS {
   id: uint32;
 }
 
-union SMsg {
+union Smsg {
   ErrorS,
   GameCreationResponseS,
 }
-table SMsgTable {
-  msg: SMsg;
+table SmsgTable {
+  msg: Smsg;
 }
 
 // -- CLIENT --

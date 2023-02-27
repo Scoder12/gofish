@@ -24,17 +24,17 @@ pub const ENUM_MIN_SMSG: u8 = 0;
 pub const ENUM_MAX_SMSG: u8 = 2;
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_SMSG: [SMsg; 3] = [
-  SMsg::NONE,
-  SMsg::ErrorS,
-  SMsg::GameCreationResponseS,
+pub const ENUM_VALUES_SMSG: [Smsg; 3] = [
+  Smsg::NONE,
+  Smsg::ErrorS,
+  Smsg::GameCreationResponseS,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct SMsg(pub u8);
+pub struct Smsg(pub u8);
 #[allow(non_upper_case_globals)]
-impl SMsg {
+impl Smsg {
   pub const NONE: Self = Self(0);
   pub const ErrorS: Self = Self(1);
   pub const GameCreationResponseS: Self = Self(2);
@@ -56,7 +56,7 @@ impl SMsg {
     }
   }
 }
-impl core::fmt::Debug for SMsg {
+impl core::fmt::Debug for Smsg {
   fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
     if let Some(name) = self.variant_name() {
       f.write_str(name)
@@ -65,7 +65,7 @@ impl core::fmt::Debug for SMsg {
     }
   }
 }
-impl<'a> flatbuffers::Follow<'a> for SMsg {
+impl<'a> flatbuffers::Follow<'a> for Smsg {
   type Inner = Self;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
@@ -74,15 +74,15 @@ impl<'a> flatbuffers::Follow<'a> for SMsg {
   }
 }
 
-impl flatbuffers::Push for SMsg {
-    type Output = SMsg;
+impl flatbuffers::Push for Smsg {
+    type Output = Smsg;
     #[inline]
     unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
         flatbuffers::emplace_scalar::<u8>(dst, self.0);
     }
 }
 
-impl flatbuffers::EndianScalar for SMsg {
+impl flatbuffers::EndianScalar for Smsg {
   type Scalar = u8;
   #[inline]
   fn to_little_endian(self) -> u8 {
@@ -96,7 +96,7 @@ impl flatbuffers::EndianScalar for SMsg {
   }
 }
 
-impl<'a> flatbuffers::Verifiable for SMsg {
+impl<'a> flatbuffers::Verifiable for Smsg {
   #[inline]
   fn run_verifier(
     v: &mut flatbuffers::Verifier, pos: usize
@@ -106,8 +106,8 @@ impl<'a> flatbuffers::Verifiable for SMsg {
   }
 }
 
-impl flatbuffers::SimpleToVerifyInSlice for SMsg {}
-pub struct SMsgUnionTableOffset {}
+impl flatbuffers::SimpleToVerifyInSlice for Smsg {}
+pub struct SmsgUnionTableOffset {}
 
 #[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
 pub const ENUM_MIN_GAME_REF: u8 = 0;
@@ -486,35 +486,35 @@ impl core::fmt::Debug for GameCreationResponseS<'_> {
       ds.finish()
   }
 }
-pub enum SMsgTableOffset {}
+pub enum SmsgTableOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
-pub struct SMsgTable<'a> {
+pub struct SmsgTable<'a> {
   pub _tab: flatbuffers::Table<'a>,
 }
 
-impl<'a> flatbuffers::Follow<'a> for SMsgTable<'a> {
-  type Inner = SMsgTable<'a>;
+impl<'a> flatbuffers::Follow<'a> for SmsgTable<'a> {
+  type Inner = SmsgTable<'a>;
   #[inline]
   unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
     Self { _tab: flatbuffers::Table::new(buf, loc) }
   }
 }
 
-impl<'a> SMsgTable<'a> {
+impl<'a> SmsgTable<'a> {
   pub const VT_MSG_TYPE: flatbuffers::VOffsetT = 4;
   pub const VT_MSG: flatbuffers::VOffsetT = 6;
 
   #[inline]
   pub unsafe fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
-    SMsgTable { _tab: table }
+    SmsgTable { _tab: table }
   }
   #[allow(unused_mut)]
   pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr>(
     _fbb: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>,
-    args: &'args SMsgTableArgs
-  ) -> flatbuffers::WIPOffset<SMsgTable<'bldr>> {
-    let mut builder = SMsgTableBuilder::new(_fbb);
+    args: &'args SmsgTableArgs
+  ) -> flatbuffers::WIPOffset<SmsgTable<'bldr>> {
+    let mut builder = SmsgTableBuilder::new(_fbb);
     if let Some(x) = args.msg { builder.add_msg(x); }
     builder.add_msg_type(args.msg_type);
     builder.finish()
@@ -522,23 +522,23 @@ impl<'a> SMsgTable<'a> {
 
 
   #[inline]
-  pub fn msg_type(&self) -> SMsg {
+  pub fn msg_type(&self) -> Smsg {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<SMsg>(SMsgTable::VT_MSG_TYPE, Some(SMsg::NONE)).unwrap()}
+    unsafe { self._tab.get::<Smsg>(SmsgTable::VT_MSG_TYPE, Some(Smsg::NONE)).unwrap()}
   }
   #[inline]
   pub fn msg(&self) -> Option<flatbuffers::Table<'a>> {
     // Safety:
     // Created from valid Table for this object
     // which contains a valid value in this slot
-    unsafe { self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Table<'a>>>(SMsgTable::VT_MSG, None)}
+    unsafe { self._tab.get::<flatbuffers::ForwardsUOffset<flatbuffers::Table<'a>>>(SmsgTable::VT_MSG, None)}
   }
   #[inline]
   #[allow(non_snake_case)]
   pub fn msg_as_error_s(&self) -> Option<ErrorS<'a>> {
-    if self.msg_type() == SMsg::ErrorS {
+    if self.msg_type() == Smsg::ErrorS {
       self.msg().map(|t| {
        // Safety:
        // Created from a valid Table for this object
@@ -553,7 +553,7 @@ impl<'a> SMsgTable<'a> {
   #[inline]
   #[allow(non_snake_case)]
   pub fn msg_as_game_creation_response_s(&self) -> Option<GameCreationResponseS<'a>> {
-    if self.msg_type() == SMsg::GameCreationResponseS {
+    if self.msg_type() == Smsg::GameCreationResponseS {
       self.msg().map(|t| {
        // Safety:
        // Created from a valid Table for this object
@@ -567,17 +567,17 @@ impl<'a> SMsgTable<'a> {
 
 }
 
-impl flatbuffers::Verifiable for SMsgTable<'_> {
+impl flatbuffers::Verifiable for SmsgTable<'_> {
   #[inline]
   fn run_verifier(
     v: &mut flatbuffers::Verifier, pos: usize
   ) -> Result<(), flatbuffers::InvalidFlatbuffer> {
     use self::flatbuffers::Verifiable;
     v.visit_table(pos)?
-     .visit_union::<SMsg, _>("msg_type", Self::VT_MSG_TYPE, "msg", Self::VT_MSG, false, |key, v, pos| {
+     .visit_union::<Smsg, _>("msg_type", Self::VT_MSG_TYPE, "msg", Self::VT_MSG, false, |key, v, pos| {
         match key {
-          SMsg::ErrorS => v.verify_union_variant::<flatbuffers::ForwardsUOffset<ErrorS>>("SMsg::ErrorS", pos),
-          SMsg::GameCreationResponseS => v.verify_union_variant::<flatbuffers::ForwardsUOffset<GameCreationResponseS>>("SMsg::GameCreationResponseS", pos),
+          Smsg::ErrorS => v.verify_union_variant::<flatbuffers::ForwardsUOffset<ErrorS>>("Smsg::ErrorS", pos),
+          Smsg::GameCreationResponseS => v.verify_union_variant::<flatbuffers::ForwardsUOffset<GameCreationResponseS>>("Smsg::GameCreationResponseS", pos),
           _ => Ok(()),
         }
      })?
@@ -585,61 +585,61 @@ impl flatbuffers::Verifiable for SMsgTable<'_> {
     Ok(())
   }
 }
-pub struct SMsgTableArgs {
-    pub msg_type: SMsg,
+pub struct SmsgTableArgs {
+    pub msg_type: Smsg,
     pub msg: Option<flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>>,
 }
-impl<'a> Default for SMsgTableArgs {
+impl<'a> Default for SmsgTableArgs {
   #[inline]
   fn default() -> Self {
-    SMsgTableArgs {
-      msg_type: SMsg::NONE,
+    SmsgTableArgs {
+      msg_type: Smsg::NONE,
       msg: None,
     }
   }
 }
 
-pub struct SMsgTableBuilder<'a: 'b, 'b> {
+pub struct SmsgTableBuilder<'a: 'b, 'b> {
   fbb_: &'b mut flatbuffers::FlatBufferBuilder<'a>,
   start_: flatbuffers::WIPOffset<flatbuffers::TableUnfinishedWIPOffset>,
 }
-impl<'a: 'b, 'b> SMsgTableBuilder<'a, 'b> {
+impl<'a: 'b, 'b> SmsgTableBuilder<'a, 'b> {
   #[inline]
-  pub fn add_msg_type(&mut self, msg_type: SMsg) {
-    self.fbb_.push_slot::<SMsg>(SMsgTable::VT_MSG_TYPE, msg_type, SMsg::NONE);
+  pub fn add_msg_type(&mut self, msg_type: Smsg) {
+    self.fbb_.push_slot::<Smsg>(SmsgTable::VT_MSG_TYPE, msg_type, Smsg::NONE);
   }
   #[inline]
   pub fn add_msg(&mut self, msg: flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>) {
-    self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(SMsgTable::VT_MSG, msg);
+    self.fbb_.push_slot_always::<flatbuffers::WIPOffset<_>>(SmsgTable::VT_MSG, msg);
   }
   #[inline]
-  pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> SMsgTableBuilder<'a, 'b> {
+  pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> SmsgTableBuilder<'a, 'b> {
     let start = _fbb.start_table();
-    SMsgTableBuilder {
+    SmsgTableBuilder {
       fbb_: _fbb,
       start_: start,
     }
   }
   #[inline]
-  pub fn finish(self) -> flatbuffers::WIPOffset<SMsgTable<'a>> {
+  pub fn finish(self) -> flatbuffers::WIPOffset<SmsgTable<'a>> {
     let o = self.fbb_.end_table(self.start_);
     flatbuffers::WIPOffset::new(o.value())
   }
 }
 
-impl core::fmt::Debug for SMsgTable<'_> {
+impl core::fmt::Debug for SmsgTable<'_> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    let mut ds = f.debug_struct("SMsgTable");
+    let mut ds = f.debug_struct("SmsgTable");
       ds.field("msg_type", &self.msg_type());
       match self.msg_type() {
-        SMsg::ErrorS => {
+        Smsg::ErrorS => {
           if let Some(x) = self.msg_as_error_s() {
             ds.field("msg", &x)
           } else {
             ds.field("msg", &"InvalidFlatbuffer: Union discriminant does not match value.")
           }
         },
-        SMsg::GameCreationResponseS => {
+        Smsg::GameCreationResponseS => {
           if let Some(x) = self.msg_as_game_creation_response_s() {
             ds.field("msg", &x)
           } else {
