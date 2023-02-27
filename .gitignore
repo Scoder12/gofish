@@ -1,2 +1,4 @@
 .direnv
 api/target
+api/schema_server.fbs
+frontend-svelte/schema_client.fbs
