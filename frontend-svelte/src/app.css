@@ -13,6 +13,9 @@
 	h3 {
 		@apply text-3xl block py-1;
 	}
+	h4 {
+		@apply text-2xl block py-1;
+	}
 
 	input[type='text'],
 	input[type='number'] {
