@@ -14,7 +14,7 @@ use axum::{
     routing::get,
     Router, TypedHeader,
 };
-use flatbuffers::{FlatBufferBuilder, InvalidFlatbuffer};
+use capnp::message::{HeapAllocator, ReaderOptions};
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     sink::SinkExt,
@@ -22,11 +22,9 @@ use futures::{
     Stream,
 };
 use rand::Rng;
+mod c2s_capnp;
+mod s2c_capnp;
 mod schema_server_generated;
-use schema_server_generated::go_fish::{
-    root_as_cmsg_table, ErrorS, ErrorSArgs, GameCreationResponseS, GameCreationResponseSArgs,
-    GameRef, Smsg, SmsgTable, SmsgTableArgs,
-};
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
@@ -123,12 +121,12 @@ async fn ws_handler(
 enum HandlerError {
     #[error("expected binary")]
     ExpectedBinary,
-    #[error("flatbuffers decode error: {0}")]
-    FlatDecode(#[from] InvalidFlatbuffer),
-    #[error("unexpected message type: {0}")]
-    UnexpectedMessage(u8),
-    #[error("invalid message")]
-    InvalidMessage,
+    #[error("proto decode error: {0}")]
+    ProtoError(#[from] capnp::Error),
+    #[error("encountered value not in schema")]
+    NotInSchema(#[from] capnp::NotInSchema),
+    #[error("unexpected message type")]
+    UnexpectedMessage,
     #[error("connection closed")]
     ConnectionClosed,
     #[error("didn't receive message")]
@@ -139,9 +137,9 @@ enum HandlerError {
     GameNotFound,
     #[error("game already started")]
     AlreadyStarted,
-    #[error("axum error")]
+    #[error("axum error: {0}")]
     Axum(#[from] axum::Error),
-    #[error("mpsc error")]
+    #[error("mpsc error: {0}")]
     Mpsc(#[from] futures::channel::mpsc::SendError),
 }
 
@@ -160,19 +158,15 @@ where
     Err(HandlerError::NoRecv)
 }
 
+fn serialize(builder: &capnp::message::Builder<HeapAllocator>) -> Message {
+    Message::Binary(capnp::serialize::write_message_to_words(builder))
+}
+
 fn error_msg(error: &str) -> Message {
-    let mut builder = FlatBufferBuilder::new();
-    let error_args = ErrorSArgs {
-        error: Some(builder.create_string(error)),
-    };
-    let error_offset = ErrorS::create(&mut builder, &error_args);
-    let smsg_args = SmsgTableArgs {
-        msg_type: Smsg::ErrorS,
-        msg: Some(error_offset.as_union_value()),
-    };
-    let smsg_offset = SmsgTable::create(&mut builder, &smsg_args);
-    builder.finish(smsg_offset, None);
-    Message::Binary(builder.finished_data().to_owned())
+    let mut builder = capnp::message::Builder::new_default();
+    let mut err = builder.init_root::<s2c_capnp::msg::Builder>().init_error();
+    err.set_msg(error);
+    serialize(&builder)
 }
 
 async fn create_game(
@@ -243,6 +237,32 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: AppState) {
     }
 }
 
+enum GameRef {
+    Create,
+    Join(GameID),
+}
+
+struct Identify {
+    name: String,
+    game: GameRef,
+}
+
+fn parse_identify(dat: &[u8]) -> Result<Identify, HandlerError> {
+    let msg =
+        capnp::serialize::read_message_from_flat_slice(&mut dat.as_ref(), ReaderOptions::new())?;
+    let identify = match msg.get_root::<c2s_capnp::msg::Reader>()?.which()? {
+        c2s_capnp::msg::Which::Identify(i) => i?,
+        _ => Err(HandlerError::UnexpectedMessage)?,
+    };
+    let name: String = identify.get_name()?.to_owned();
+    let game = match identify.get_game()?.which()? {
+        c2s_capnp::game_ref::Which::Create(()) => GameRef::Create,
+        c2s_capnp::game_ref::Which::Join(j) => GameRef::Join(j),
+    };
+    Ok(Identify { name, game })
+}
+
+/// Basically ? except returns ownership of $sender to caller
 macro_rules! map_err {
     ($sender:expr, $e:expr) => {
         match $e {
@@ -260,28 +280,19 @@ async fn handle_socket_inner(
     state: AppState,
 ) -> Result<(), (SplitSink<WebSocket, Message>, HandlerError)> {
     let dat = map_err!(sender, recv_next(&mut receiver).await);
-    let msg = map_err!(sender, root_as_cmsg_table(dat.as_ref()));
-    let identify = map_err!(
-        sender,
-        msg.msg_as_identify_c()
-            .ok_or_else(|| HandlerError::UnexpectedMessage(msg.msg_type().0))
-    );
+    let identify = map_err!(sender, parse_identify(dat.as_ref()));
 
     let (send_tx, mut send_rx) = unbounded();
     let (mut recv_tx, recv_rx) = unbounded();
     let player = Player {
-        name: identify.name().to_owned(),
+        name: identify.name,
         tx: send_tx,
         rx: recv_rx,
     };
 
-    match identify.game_type() {
+    match identify.game {
         GameRef::Create => map_err!(sender, create_game(state.clone(), who, player).await),
-        GameRef::Join => map_err!(
-            sender,
-            join_game(&state, &identify.game_as_join().unwrap().id(), who, player).await
-        ),
-        _ => return Err((sender, HandlerError::InvalidMessage)),
+        GameRef::Join(id) => map_err!(sender, join_game(&state, &id, who, player).await),
     };
 
     let mut send_task: JoinHandle<Result<(), HandlerError>> = tokio::spawn(async move {
@@ -355,17 +366,13 @@ async fn handle_lobby(
     }
 }
 
-fn game_creation_response(game_id: GameID) -> Message {
-    let mut builder = FlatBufferBuilder::new();
-    let game_creation_args = GameCreationResponseSArgs { id: game_id };
-    let game_creation_offset = GameCreationResponseS::create(&mut builder, &game_creation_args);
-    let msg_args = SmsgTableArgs {
-        msg_type: Smsg::GameCreationResponseS,
-        msg: Some(game_creation_offset.as_union_value()),
-    };
-    let msg_offset = SmsgTable::create(&mut builder, &msg_args);
-    builder.finish(msg_offset, None);
-    Message::Binary(builder.finished_data().to_owned())
+fn game_created(game_id: GameID) -> Message {
+    let mut builder = capnp::message::Builder::new_default();
+    let mut gc = builder
+        .init_root::<s2c_capnp::msg::Builder>()
+        .init_game_created();
+    gc.set_id(game_id);
+    serialize(&builder)
 }
 
 async fn game_handler(
@@ -376,7 +383,7 @@ async fn game_handler(
     receive_joins: JoinsReceiver,
 ) {
     tracing::debug!("Starting game with ID {}", game_id);
-    let Ok(_) = host.tx.send(game_creation_response(game_id)).await else {
+    let Ok(_) = host.tx.send(game_created(game_id)).await else {
         tracing::debug!("Failed to ack game creation");
         return;
     };

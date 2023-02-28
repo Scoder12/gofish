@@ -53,6 +53,7 @@
             nodejs-18_x
             yarn
             flatbuffers
+            capnproto
           ])
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs; [libiconv]);
       };

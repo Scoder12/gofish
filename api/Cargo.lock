@@ -7,6 +7,7 @@ name = "api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "capnp",
  "flatbuffers",
  "futures",
  "rand",
@@ -128,6 +129,12 @@ name = "bytes"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
+
+[[package]]
+name = "capnp"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35400c6acb55f1a91e6843beca189aba6bccd3c11fae5a7c0288fe5a1c3da822"
 
 [[package]]
 name = "cfg-if"
