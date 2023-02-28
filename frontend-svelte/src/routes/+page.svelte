@@ -113,5 +113,7 @@
 				connect(evt.detail);
 			}}
 		/>
+	{:else if stage == Stage.Connecting}
+		<p>Connecting...</p>
 	{/if}
 </Center>
