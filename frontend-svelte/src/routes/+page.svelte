@@ -4,7 +4,8 @@
 	import Name from './Name.svelte';
 	import RoomType from './RoomType.svelte';
 	import { env } from '$env/dynamic/public';
-	import { Msg as C2SMsg, GameRef } from '../c2s.capnp';
+	import { Msg as C2SMsg, GameRef, Identify } from '../c2s.capnp';
+	import * as capnp from 'capnp-ts';
 
 	enum Stage {
 		Name,
@@ -33,9 +34,24 @@
 		});
 	}
 
+	function identifyMsg(detail: any): ArrayBuffer {
+		const buf = new capnp.Message();
+		const msg = buf.initRoot(C2SMsg as any) as unknown as C2SMsg;
+		const id = msg.initIdentify();
+		id.setName(name);
+		const game = id.initGame();
+		if (detail.type == 'create') {
+			game.setCreate();
+		} else if (detail.type == 'join') {
+			game.setJoin(detail.pin);
+		} else {
+			throw new Error('Unexpected join type');
+		}
+		return buf.toArrayBuffer();
+	}
+
 	function connect(detail: any) {
-		const m = new C2SMsg();
-		const msg = 'abcd';
+		const msg = identifyMsg(detail);
 		const wsUrl = env.PUBLIC_WS_URL;
 		if (!wsUrl) throw new Error('misconfigured');
 		ws = new WebSocket(wsUrl);
